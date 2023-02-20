@@ -3,15 +3,23 @@ package application
 import (
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 	"github.com/sergey-suslov/awesome-chat/common/types"
 	"go.uber.org/zap"
 )
 
+type UserConnector interface {
+	AddConnection(id string, uc *UserConnection) error
+	Disconnect(uc *UserConnection) error
+}
+
 type UserConnection struct {
-	conn   *websocket.Conn
-	logger *zap.SugaredLogger
-	Send   chan types.Message
+	conn          *websocket.Conn
+	logger        *zap.SugaredLogger
+	Send          chan types.Message
+	userConnector UserConnector
+	Id            string
 }
 
 var upgrader = websocket.Upgrader{
@@ -33,8 +41,8 @@ const (
 	maxMessageSize = 512
 )
 
-func NewUserConnection(userConnection *websocket.Conn, logger *zap.SugaredLogger, send chan types.Message) *UserConnection {
-	return &UserConnection{conn: userConnection, logger: logger, Send: send}
+func NewUserConnection(userConnection *websocket.Conn, logger *zap.SugaredLogger, send chan types.Message, userConnector UserConnector) *UserConnection {
+	return &UserConnection{Id: string(uuid.New().String()), conn: userConnection, logger: logger, Send: send, userConnector: userConnector}
 }
 
 func (uc *UserConnection) Run() {
@@ -59,10 +67,11 @@ func (uc *UserConnection) HandleRead() {
 		}
 
 		if mt != websocket.BinaryMessage {
+			uc.logger.Debug("Message is not binary:", mt)
 			continue
 		}
 		if len(message) < 2 {
-			uc.logger.Debug("Message is too short: %d", len(message))
+			uc.logger.Debug("Message is too short:", len(message))
 			continue
 		}
 
@@ -73,11 +82,18 @@ func (uc *UserConnection) HandleRead() {
 		switch messageType {
 		case types.MessageTypeConnect:
 			body := types.ConnectWithNameMessage{}
-			err = DecodeBody(&body, rawMessage)
+			err = types.DecodeMessage(&body, rawMessage)
 			if err != nil {
+				uc.logger.Debug("Error decoding body: ", err)
 				break
 			}
-			// TODO: Handle connection
+			uc.logger.Debug("ConnectWithNameMessage: ", body)
+			err = uc.userConnector.AddConnection(body.Name, uc)
+			if err != nil {
+				uc.Send <- types.Message{MessageType: types.MessageTypeConnectionError}
+				break
+			}
+			uc.Send <- types.Message{MessageType: types.MessageTypeConnectionError}
 		}
 	}
 }
@@ -86,6 +102,8 @@ func (uc *UserConnection) HandleWrite() {
 	ticker := time.NewTicker(pingPeriod)
 	defer func() {
 		ticker.Stop()
+		uc.userConnector.Disconnect(uc)
+		close(uc.Send)
 		uc.conn.Close()
 	}()
 
@@ -104,9 +122,7 @@ func (uc *UserConnection) HandleWrite() {
 			if err != nil {
 				return
 			}
-			msg := []byte{message.MessageType}
-			msg = append(msg, message.Data...)
-			w.Write(msg)
+			w.Write(types.ComposeMessage(message.MessageType, message.Data))
 
 			if err := w.Close(); err != nil {
 				return

@@ -18,13 +18,14 @@ func NewApplication(config Config, logger *zap.SugaredLogger) Application {
 }
 
 func (app *Application) Start() {
+	hub := NewHub()
 	http.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
 		conn, err := upgrader.Upgrade(w, r, nil)
 		if err != nil {
-			app.logger.Warn("Error during connection upgradation: %s", zap.Error(err))
+			app.logger.Warn("Error during connection upgrade: %s", zap.Error(err))
 			return
 		}
-		NewUserConnection(conn, app.logger, make(chan types.Message)).Run()
+		NewUserConnection(conn, app.logger, make(chan types.Message), hub).Run()
 	})
 	err := http.ListenAndServe(fmt.Sprintf(":%d", app.config.Port), nil)
 	if err != nil {
