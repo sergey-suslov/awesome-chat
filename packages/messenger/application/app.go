@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/sergey-suslov/awesome-chat/common/types"
+	"github.com/sergey-suslov/awesome-chat/packages/messenger/broker"
 	"go.uber.org/zap"
 )
 
@@ -18,7 +19,8 @@ func NewApplication(config Config, logger *zap.SugaredLogger) Application {
 }
 
 func (app *Application) Start() {
-	hub := NewHub()
+	lb := broker.NewNatsBroker()
+	hub := NewHub(lb)
 	http.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
 		conn, err := upgrader.Upgrade(w, r, nil)
 		if err != nil {

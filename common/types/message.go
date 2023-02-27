@@ -8,8 +8,12 @@ import (
 const (
 	MessageTypeConnect uint8 = 1 + iota
 	MessageTypeNewRoom
+	MessageTypeNewRoomInvite
+	MessageTypeNewRoomInviteAccepted
+	MessageTypeNewRoomReady
 	MessageTypeConnected
 	MessageTypeConnectionError
+	MessageTypeRoomCreationError
 )
 
 type Message struct {
@@ -19,6 +23,21 @@ type Message struct {
 
 type ConnectWithNameMessage struct {
 	Name string
+	Pub  string
+}
+
+type NewRoomByUserTagMessage struct {
+	UserTag string
+}
+
+type InviteToRoomMessage struct {
+	RoomId string
+	Pub    string
+}
+
+type InvitationAcceptedMessage struct {
+	RoomId string
+	Pub    string
 }
 
 func EncodeMessage[T any](t T) ([]byte, error) {
@@ -29,6 +48,14 @@ func EncodeMessage[T any](t T) ([]byte, error) {
 		return nil, err
 	}
 	return buf.Bytes(), nil
+}
+
+func EncodeMessageOrPanic[T any](t T) []byte {
+	enc, err := EncodeMessage(t)
+	if err != nil {
+		panic(err)
+	}
+	return enc
 }
 
 func DecodeMessage[T any](t *T, data []byte) error {

@@ -10,8 +10,10 @@ import (
 )
 
 type UserConnector interface {
-	AddConnection(id string, uc *UserConnection) error
-	Disconnect(uc *UserConnection) error
+	AddConnection(nickname string, pub string, uc *UserConnection) error
+	Disconnect(uc *UserConnection)
+	CreateRoomWithUserByTag(userTag string, uc *UserConnection) error
+	SendRoomInvitationAccept(roomId, pub string) error
 }
 
 type UserConnection struct {
@@ -88,12 +90,39 @@ func (uc *UserConnection) HandleRead() {
 				break
 			}
 			uc.logger.Debug("ConnectWithNameMessage: ", body)
-			err = uc.userConnector.AddConnection(body.Name, uc)
+
+			err = uc.userConnector.AddConnection(body.Name, body.Pub, uc)
 			if err != nil {
 				uc.Send <- types.Message{MessageType: types.MessageTypeConnectionError}
 				break
 			}
 			uc.Send <- types.Message{MessageType: types.MessageTypeConnectionError}
+
+		case types.MessageTypeNewRoom:
+			body := types.NewRoomByUserTagMessage{}
+			err = types.DecodeMessage(&body, rawMessage)
+			if err != nil {
+				uc.logger.Debug("Error decoding body: ", err)
+				break
+			}
+
+			err = uc.userConnector.CreateRoomWithUserByTag(body.UserTag, uc)
+			if err != nil {
+				uc.Send <- types.Message{MessageType: types.MessageTypeRoomCreationError}
+				break
+			}
+		case types.MessageTypeNewRoomInviteAccepted:
+			body := types.InvitationAcceptedMessage{}
+			err = types.DecodeMessage(&body, rawMessage)
+			if err != nil {
+				uc.logger.Debug("Error decoding body: ", err)
+				break
+			}
+			err = uc.userConnector.SendRoomInvitationAccept(body.RoomId, body.Pub)
+			if err != nil {
+				uc.logger.Debug("Error sending room invitation accept ")
+				break
+			}
 		}
 	}
 }
