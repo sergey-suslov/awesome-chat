@@ -7,13 +7,11 @@ import (
 
 const (
 	MessageTypeConnect uint8 = 1 + iota
-	MessageTypeNewRoom
-	MessageTypeNewRoomInvite
-	MessageTypeNewRoomInviteAccepted
-	MessageTypeNewRoomReady
 	MessageTypeConnected
 	MessageTypeConnectionError
-	MessageTypeRoomCreationError
+	MessageTypeUserInfos
+	MessageTypeNewUserConnected
+	MessageTypeUserDisconnected
 )
 
 type Message struct {
@@ -26,18 +24,12 @@ type ConnectWithNameMessage struct {
 	Pub  string
 }
 
-type NewRoomByUserTagMessage struct {
-	UserTag string
+type UserInfosMessage struct {
+	Users []UserInfo
 }
 
-type InviteToRoomMessage struct {
-	RoomId string
-	Pub    string
-}
-
-type InvitationAcceptedMessage struct {
-	RoomId string
-	Pub    string
+type UserPayload struct {
+	User UserInfo
 }
 
 func EncodeMessage[T any](t T) ([]byte, error) {
