@@ -11,11 +11,23 @@ import (
 
 type NatsBroker struct {
 	nc     *nats.Conn
+	js     nats.JetStreamContext
 	logger *zap.SugaredLogger
 }
 
-func NewNatsBroker(nc *nats.Conn, logger *zap.SugaredLogger) *NatsBroker {
-	return &NatsBroker{nc: nc, logger: logger}
+func NewNatsBroker(nc *nats.Conn, logger *zap.SugaredLogger) (*NatsBroker, error) {
+	js, err := nc.JetStream()
+	if err != nil {
+		return nil, err
+	}
+	_, err = js.AddStream(&nats.StreamConfig{
+		Name:     "messages",
+		Subjects: []string{"messages.>"},
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &NatsBroker{nc: nc, js: js, logger: logger}, nil
 }
 
 func (nb *NatsBroker) NotifyOnNewUser(id, pub string) error {
@@ -40,6 +52,15 @@ func (nb *NatsBroker) SubscribeToUserMessages(id string, cb func(m types.Message
 	return nb.subscribe(fmt.Sprintf("user.%s.*", id), cb)
 }
 
+func (nb *NatsBroker) SubscribeToChatMessages(id string, cb func(m types.Message)) (common.TermChan, error) {
+	return nb.subscribeStream(fmt.Sprintf("messages.%s.e", id), cb)
+}
+
+func (nb *NatsBroker) SendMessageToUser(userId string, data []byte) error {
+	_, err := nb.js.Publish(fmt.Sprintf("messages.%s.e", userId), data)
+	return err
+}
+
 func (nb *NatsBroker) subscribe(topic string, cb func(m types.Message)) (common.TermChan, error) {
 	term := make(common.TermChan)
 	s, err := nb.nc.Subscribe(topic, func(msg *nats.Msg) {
@@ -52,13 +73,43 @@ func (nb *NatsBroker) subscribe(topic string, cb func(m types.Message)) (common.
 			return
 		}
 
+		nb.logger.Debug("topic:", topic)
+		nb.logger.Debug("message:", m)
 		cb(m)
+		msg.Ack()
 	})
 	if err != nil {
 		return nil, err
 	}
 	go func() {
 		<-term
+		nb.logger.Debugf("subscription %s terminated", topic)
+		s.Unsubscribe()
+	}()
+	return term, nil
+}
+
+func (nb *NatsBroker) subscribeStream(topic string, cb func(m types.Message)) (common.TermChan, error) {
+	term := make(common.TermChan)
+	s, err := nb.js.Subscribe(topic, func(msg *nats.Msg) {
+		if len(msg.Data) < 1 {
+			nb.logger.Debug("Message is too short:", len(msg.Data))
+			return
+		}
+		m, err := types.DecomposeMessage(msg.Data)
+		if err != nil {
+			return
+		}
+
+		cb(m)
+		msg.Ack()
+	})
+	if err != nil {
+		return nil, err
+	}
+	go func() {
+		<-term
+		nb.logger.Debugf("subscription stream %s terminated", topic)
 		s.Unsubscribe()
 	}()
 	return term, nil

@@ -15,6 +15,7 @@ type MessageBroker interface {
 	NotifyOnUserDisconnect(id string) error
 	SubscribeToRoomUpdate(cb func(m types.Message)) (common.TermChan, error)
 	SubscribeToUserMessages(id string, cb func(m types.Message)) (common.TermChan, error)
+	SubscribeToChatMessages(id string, cb func(m types.Message)) (common.TermChan, error)
 }
 
 type ConnectorService struct {
@@ -27,27 +28,32 @@ type ConnectorService struct {
 }
 
 func NewConnectorService(mb MessageBroker, logger *zap.SugaredLogger) *ConnectorService {
-	return &ConnectorService{mb: mb, users: make([]types.UserInfo, 1), uLock: sync.Mutex{}, logger: logger, clientConnById: make(map[string]shared.ClientConnection)}
+	return &ConnectorService{mb: mb, users: []types.UserInfo{}, uLock: sync.Mutex{}, logger: logger, clientConnById: make(map[string]shared.ClientConnection)}
 }
 
 func (cs *ConnectorService) Run() error {
+	cs.logger.Debug("Starting ConnectorService")
 	term, err := cs.mb.SubscribeToRoomUpdate(func(m types.Message) {
 		switch m.MessageType {
 		case types.MessageTypeNewUserConnected:
+			cs.logger.Debug("connector: new user connected")
 			body := types.UserPayload{}
 			err := types.DecodeMessage(&body, m.Data)
 			if err != nil {
 				cs.logger.Debug("Error decoding body: ", err)
 				break
 			}
+			cs.logger.Debugf("Add update user %s", body.User.Id)
 			cs.addUpdateUser(body.User)
 		case types.MessageTypeUserDisconnected:
+			cs.logger.Debug("connector: user disconnected")
 			body := types.UserPayload{}
 			err := types.DecodeMessage(&body, m.Data)
 			if err != nil {
 				cs.logger.Debug("Error decoding body: ", err)
 				break
 			}
+			cs.logger.Debugf("Remove user %s", body.User.Id)
 			cs.removeUser(body.User)
 		}
 	})
@@ -89,11 +95,13 @@ func (cs *ConnectorService) ConnectToChat(cc shared.ClientConnection, id, pub st
 		delete(cs.clientConnById, id)
 	}
 
+	cs.logger.Debugf("connecting user %s to chat", id)
 	err := cs.mb.NotifyOnNewUser(id, pub)
 	if err != nil {
 		return err
 	}
 
+	cs.logger.Debug("sending user infos", cs.users)
 	err = cc.Send(types.Message{MessageType: types.MessageTypeUserInfos, Data: types.EncodeMessageOrPanic(types.UserInfosMessage{Users: cs.users})})
 	if err != nil {
 		return err
@@ -105,6 +113,7 @@ func (cs *ConnectorService) ConnectToChat(cc shared.ClientConnection, id, pub st
 }
 
 func (cs *ConnectorService) Disconnect(cc shared.ClientConnection, id string) error {
+	cs.logger.Debugf("disconnecting user %s from chat", id)
 	delete(cs.clientConnById, id)
 	cs.removeUser(types.UserInfo{Id: id})
 	err := cs.mb.NotifyOnUserDisconnect(id)
@@ -115,8 +124,9 @@ func (cs *ConnectorService) Disconnect(cc shared.ClientConnection, id string) er
 	return nil
 }
 
-func (cs *ConnectorService) SubscribeUserToMessages(cc shared.ClientConnection, id string) error {
+func (cs *ConnectorService) SubscribeUserToMessages(cc shared.ClientConnection, id string) (common.TermChan, error) {
 	var term common.TermChan
+	cs.logger.Debugf("subscribing user %s to broker messages", id)
 	term, err := cs.mb.SubscribeToUserMessages(id, func(m types.Message) {
 		cc, existing := cs.clientConnById[id]
 		if !existing {
@@ -129,5 +139,33 @@ func (cs *ConnectorService) SubscribeUserToMessages(cc shared.ClientConnection, 
 			return
 		}
 	})
-	return err
+	if err != nil {
+		cs.logger.Warnf("error subscribing user %s to broker messages", id)
+		cs.logger.Warn("error:", err)
+		return nil, err
+	}
+	return term, nil
+}
+
+func (cs *ConnectorService) SubscribeUserToChatMessages(cc shared.ClientConnection, id string) (common.TermChan, error) {
+	var term common.TermChan
+	cs.logger.Debugf("subscribing user %s to chat messages", id)
+	term, err := cs.mb.SubscribeToChatMessages(id, func(m types.Message) {
+		cc, existing := cs.clientConnById[id]
+		if !existing {
+			term <- struct{}{}
+			return
+		}
+		err := cc.Send(m)
+		if err != nil {
+			term <- struct{}{}
+			return
+		}
+	})
+	if err != nil {
+		cs.logger.Warnf("error subscribing user %s to broker messages", id)
+		cs.logger.Warn("error:", err)
+		return nil, err
+	}
+	return term, nil
 }

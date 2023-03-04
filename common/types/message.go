@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/gob"
 	"errors"
+	"fmt"
 )
 
 const (
@@ -13,6 +14,7 @@ const (
 	MessageTypeUserInfos
 	MessageTypeNewUserConnected
 	MessageTypeUserDisconnected
+	MessageTypeMessageToUser
 )
 
 type Message struct {
@@ -31,6 +33,11 @@ type UserInfosMessage struct {
 
 type UserPayload struct {
 	User UserInfo
+}
+
+type MessageToUser struct {
+	UserId string
+	Data   []byte
 }
 
 func EncodeMessage[T any](t T) ([]byte, error) {
@@ -54,7 +61,7 @@ func EncodeMessageOrPanic[T any](t T) []byte {
 func DecodeMessage[T any](t *T, data []byte) error {
 	buf := bytes.NewBuffer(data)
 	dec := gob.NewDecoder(buf)
-	err := dec.Decode(&t)
+	err := dec.Decode(t)
 	if err != nil {
 		return err
 	}

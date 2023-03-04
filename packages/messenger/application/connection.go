@@ -1,10 +1,12 @@
 package application
 
 import (
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
+	"github.com/sergey-suslov/awesome-chat/common"
 	"github.com/sergey-suslov/awesome-chat/common/types"
 	"github.com/sergey-suslov/awesome-chat/packages/messenger/shared"
 	"go.uber.org/zap"
@@ -13,6 +15,12 @@ import (
 type UserConnector interface {
 	ConnectToChat(cc shared.ClientConnection, id, pub string) error
 	Disconnect(cc shared.ClientConnection, id string) error
+	SubscribeUserToMessages(cc shared.ClientConnection, id string) (common.TermChan, error)
+	SubscribeUserToChatMessages(cc shared.ClientConnection, id string) (common.TermChan, error)
+}
+
+type Messenger interface {
+	SendMessage(userId string, data []byte) error
 }
 
 type UserConnection struct {
@@ -20,7 +28,9 @@ type UserConnection struct {
 	logger        *zap.SugaredLogger
 	sendChan      chan types.Message
 	userConnector UserConnector
+	messenger     Messenger
 	Id            string
+	term          sync.WaitGroup
 }
 
 var upgrader = websocket.Upgrader{
@@ -33,7 +43,7 @@ const (
 	writeWait = 10 * time.Second
 
 	// Time allowed to read the next pong message from the peer.
-	pongWait = 60 * time.Second
+	pongWait = 5 * time.Second
 
 	// Send pings to peer with this period. Must be less than pongWait.
 	pingPeriod = (pongWait * 9) / 10
@@ -42,16 +52,33 @@ const (
 	maxMessageSize = 512
 )
 
-func NewUserConnection(userConnection *websocket.Conn, logger *zap.SugaredLogger, send chan types.Message, userConnector UserConnector) *UserConnection {
-	return &UserConnection{Id: string(uuid.New().String()), conn: userConnection, logger: logger, sendChan: send, userConnector: userConnector}
+func NewUserConnection(userConnection *websocket.Conn, logger *zap.SugaredLogger, send chan types.Message, userConnector UserConnector, messenger Messenger) *UserConnection {
+	return &UserConnection{Id: string(uuid.New().String()), conn: userConnection, logger: logger, sendChan: send, userConnector: userConnector, messenger: messenger}
 }
 
-func (uc *UserConnection) Run() {
+func (uc *UserConnection) Run() error {
+	termUserToMessages, err := uc.userConnector.SubscribeUserToMessages(uc, uc.Id)
+	if err != nil {
+		return err
+	}
+	termUserToChatMessages, err := uc.userConnector.SubscribeUserToChatMessages(uc, uc.Id)
+	if err != nil {
+		return err
+	}
+	uc.term.Add(1)
+	go func() {
+		uc.term.Wait()
+		uc.logger.Debug("connection terminated wait group", uc.Id)
+		termUserToChatMessages <- struct{}{}
+		termUserToMessages <- struct{}{}
+	}()
 	go uc.HandleRead()
 	go uc.HandleWrite()
+	return nil
 }
 
 func (uc *UserConnection) Send(message types.Message) error {
+	uc.sendChan <- message
 	return nil
 }
 
@@ -99,6 +126,20 @@ func (uc *UserConnection) HandleRead() {
 				uc.sendChan <- types.Message{MessageType: types.MessageTypeConnectionError}
 				break
 			}
+		case types.MessageTypeMessageToUser:
+			body := types.MessageToUser{}
+			err = types.DecodeMessage(&body, rawMessage)
+			if err != nil {
+				uc.logger.Debug("Error decoding body: ", err)
+				break
+			}
+			uc.logger.Debug("MessageToUser: ", body)
+
+			err = uc.messenger.SendMessage(body.UserId, body.Data)
+			if err != nil {
+				uc.sendChan <- types.Message{MessageType: types.MessageTypeConnectionError}
+				break
+			}
 		}
 	}
 }
@@ -106,6 +147,8 @@ func (uc *UserConnection) HandleRead() {
 func (uc *UserConnection) HandleWrite() {
 	ticker := time.NewTicker(pingPeriod)
 	defer func() {
+		uc.logger.Debug("closing write handler for", uc.Id)
+		uc.term.Done()
 		ticker.Stop()
 		uc.userConnector.Disconnect(uc, uc.Id)
 		close(uc.sendChan)
@@ -133,7 +176,9 @@ func (uc *UserConnection) HandleWrite() {
 			}
 		case <-ticker.C:
 			uc.conn.SetWriteDeadline(time.Now().Add(writeWait))
+			uc.logger.Debug("ping ", uc.Id)
 			if err := uc.conn.WriteMessage(websocket.PingMessage, nil); err != nil {
+				uc.logger.Debug("pong err ", uc.Id)
 				return
 			}
 		}

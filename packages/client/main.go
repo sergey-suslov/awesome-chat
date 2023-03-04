@@ -21,7 +21,12 @@ func receiveHandler(connection *websocket.Conn) {
 			log.Println("Error in receive:", err)
 			return
 		}
-		log.Printf("Received: %s\n", msg)
+		m, _ := types.DecomposeMessage(msg)
+		log.Printf("Received: %d\n", m.MessageType)
+		body := types.UserInfosMessage{}
+		err = types.DecodeMessage(&body, m.Data)
+		log.Println(err)
+		log.Println(body)
 	}
 }
 
@@ -45,7 +50,7 @@ func main() {
 		select {
 		case <-time.After(time.Duration(1) * time.Millisecond * 1000):
 			// Send an echo packet every second
-			message, _ := types.EncodeMessage(types.ConnectWithNameMessage{Name: "John"})
+			message, _ := types.EncodeMessage(types.ConnectWithNameMessage{Name: "John", Pub: "pub-key"})
 			err := conn.WriteMessage(websocket.BinaryMessage, types.ComposeMessage(types.MessageTypeConnect, message))
 			if err != nil {
 				log.Println("Error during writing to websocket:", err)

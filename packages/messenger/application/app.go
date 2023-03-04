@@ -8,6 +8,7 @@ import (
 	"github.com/sergey-suslov/awesome-chat/common/types"
 	"github.com/sergey-suslov/awesome-chat/packages/messenger/broker"
 	"github.com/sergey-suslov/awesome-chat/packages/messenger/service/connector"
+	"github.com/sergey-suslov/awesome-chat/packages/messenger/service/messenger"
 	"go.uber.org/zap"
 )
 
@@ -21,18 +22,32 @@ func NewApplication(config Config, logger *zap.SugaredLogger) Application {
 }
 
 func (app *Application) Start() {
-	nc, _ := nats.Connect(nats.DefaultURL)
-	lb := broker.NewNatsBroker(nc, app.logger)
-	connector := connector.NewConnectorService(lb, app.logger)
+	nc, err := nats.Connect(nats.DefaultURL)
+	if err != nil {
+		app.logger.Fatal("Error connecting to NATS: ", err)
+	}
+	natsBroker, err := broker.NewNatsBroker(nc, app.logger)
+	if err != nil {
+		app.logger.Fatal("Error creating NatsBroker: ", err)
+	}
+	connector := connector.NewConnectorService(natsBroker, app.logger)
+	err = connector.Run()
+	if err != nil {
+		app.logger.Fatal("Error running ConnectorService: ", err)
+	}
+	messenger := messenger.NewMessengerService(natsBroker, app.logger)
 	http.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
 		conn, err := upgrader.Upgrade(w, r, nil)
 		if err != nil {
 			app.logger.Warn("Error during connection upgrade: %s", zap.Error(err))
 			return
 		}
-		NewUserConnection(conn, app.logger, make(chan types.Message), connector).Run()
+		err = NewUserConnection(conn, app.logger, make(chan types.Message), connector, messenger).Run()
+		if err != nil {
+			app.logger.Warn("Error running connection", err)
+		}
 	})
-	err := http.ListenAndServe(fmt.Sprintf(":%d", app.config.Port), nil)
+	err = http.ListenAndServe(fmt.Sprintf(":%d", app.config.Port), nil)
 	if err != nil {
 		app.logger.Fatal("ListenAndServe: ", err)
 	}
