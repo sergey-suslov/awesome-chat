@@ -3,6 +3,7 @@ package types
 import (
 	"bytes"
 	"encoding/gob"
+	"errors"
 )
 
 const (
@@ -60,6 +61,12 @@ func DecodeMessage[T any](t *T, data []byte) error {
 	return nil
 }
 
+func DecomposeMessage(data []byte) (Message, error) {
+	if len(data) < 2 {
+		return Message{}, errors.New("Message is too short")
+	}
+	return Message{MessageType: data[0], Data: data[1:]}, nil
+}
 func ComposeMessage(messageType uint8, encoded []byte) []byte {
 	msg := []byte{messageType}
 	return append(msg, encoded...)

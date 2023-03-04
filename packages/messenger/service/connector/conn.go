@@ -14,7 +14,7 @@ type MessageBroker interface {
 	NotifyOnNewUser(id, pub string) error
 	NotifyOnUserDisconnect(id string) error
 	SubscribeToRoomUpdate(cb func(m types.Message)) (common.TermChan, error)
-	SubscribeToUserMessages(cb func(m types.Message)) (common.TermChan, error)
+	SubscribeToUserMessages(id string, cb func(m types.Message)) (common.TermChan, error)
 }
 
 type ConnectorService struct {
@@ -117,7 +117,7 @@ func (cs *ConnectorService) Disconnect(cc shared.ClientConnection, id string) er
 
 func (cs *ConnectorService) SubscribeUserToMessages(cc shared.ClientConnection, id string) error {
 	var term common.TermChan
-	term, err := cs.mb.SubscribeToUserMessages(func(m types.Message) {
+	term, err := cs.mb.SubscribeToUserMessages(id, func(m types.Message) {
 		cc, existing := cs.clientConnById[id]
 		if !existing {
 			term <- struct{}{}

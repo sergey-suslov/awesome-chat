@@ -12,7 +12,7 @@ import (
 
 type UserConnector interface {
 	ConnectToChat(cc shared.ClientConnection, id, pub string) error
-	Disconnect(cc shared.ClientConnection, id string)
+	Disconnect(cc shared.ClientConnection, id string) error
 }
 
 type UserConnection struct {
@@ -75,14 +75,14 @@ func (uc *UserConnection) HandleRead() {
 			uc.logger.Debug("Message is not binary:", mt)
 			continue
 		}
-		if len(message) < 2 {
-			uc.logger.Debug("Message is too short:", len(message))
-			continue
-		}
 
 		// Handle message
-		messageType := message[0]
-		rawMessage := message[1:]
+		msg, err := types.DecomposeMessage(message)
+		if err != nil {
+			continue
+		}
+		messageType := msg.MessageType
+		rawMessage := msg.Data
 
 		switch messageType {
 		case types.MessageTypeConnect:
