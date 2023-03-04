@@ -122,6 +122,7 @@ func (uc *UserConnection) HandleRead() {
 			uc.logger.Debug("ConnectWithNameMessage: ", body)
 
 			err = uc.userConnector.ConnectToChat(uc, uc.Id, body.Pub)
+			uc.sendChan <- types.Message{MessageType: types.MessageTypeConnected, Data: types.EncodeMessageOrPanic(types.UserInfo{Id: uc.Id, Pub: body.Pub})}
 			if err != nil {
 				uc.sendChan <- types.Message{MessageType: types.MessageTypeConnectionError}
 				break

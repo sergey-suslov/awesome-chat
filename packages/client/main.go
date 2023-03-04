@@ -23,10 +23,18 @@ func receiveHandler(connection *websocket.Conn) {
 		}
 		m, _ := types.DecomposeMessage(msg)
 		log.Printf("Received: %d\n", m.MessageType)
-		body := types.UserInfosMessage{}
-		err = types.DecodeMessage(&body, m.Data)
-		log.Println(err)
-		log.Println(body)
+		switch m.MessageType {
+		case types.MessageTypeUserInfos:
+			body := types.UserInfosMessage{}
+			err = types.DecodeMessage(&body, m.Data)
+			log.Println(err)
+			log.Println(body)
+		case types.MessageTypeConnected:
+			body := types.UserInfo{}
+			err = types.DecodeMessage(&body, m.Data)
+			log.Println(err)
+			log.Println(body)
+		}
 	}
 }
 
