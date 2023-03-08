@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 	"github.com/sergey-suslov/awesome-chat/common/types"
+	"github.com/sergey-suslov/awesome-chat/common/util"
 	"go.uber.org/zap"
 )
 
@@ -57,16 +58,47 @@ func (app *Application) handleRead() {
 		case types.MessageTypeUserInfos:
 			body := types.UserInfosMessage{}
 			err = types.DecodeMessage(&body, m.Data)
-			app.logger.Debug(err)
-			app.logger.Debug(body)
-			app.userInfos = body.Users
-			app.logger.Debug("user infos", app.userInfos)
+			app.logger.Debug("user id: ", app.id)
+			app.logger.Debug("received infos: ", body)
+			app.userInfos = util.Filter(body.Users, func(u types.UserInfo) bool {
+				return u.Id != app.id
+			})
+			app.logger.Debug("user infos applied: ", app.userInfos)
 		case types.MessageTypeConnected:
 			body := types.UserInfo{}
 			err = types.DecodeMessage(&body, m.Data)
 			app.logger.Debug(err)
 			app.logger.Debug(body)
+			app.logger.Debug("User connected ", body.Id)
 			app.id = body.Id
+		case types.MessageTypeNewUserConnected:
+			app.logger.Debug("connector: new user connected")
+			body := types.UserPayload{}
+			err := types.DecodeMessage(&body, m.Data)
+			if err != nil {
+				app.logger.Debug("Error decoding body: ", err)
+				break
+			}
+			if body.User.Id == app.id {
+				break
+			}
+			app.logger.Debugf("Add update user %s", body.User.Id)
+			app.userInfos = append(app.userInfos, body.User)
+		case types.MessageTypeUserDisconnected:
+			app.logger.Debug("connector: user disconnected")
+			body := types.UserPayload{}
+			err := types.DecodeMessage(&body, m.Data)
+			if err != nil {
+				app.logger.Debug("Error decoding body: ", err)
+				break
+			}
+			if body.User.Id == app.id {
+				break
+			}
+			app.logger.Debugf("Add update user %s", body.User.Id)
+			app.userInfos = util.Filter(app.userInfos, func(u types.UserInfo) bool {
+				return u.Id != body.User.Id
+			})
 		case types.MessageTypeMessageToUser:
 			body := types.MessageToUser{}
 			err = types.DecodeMessage(&body, m.Data)

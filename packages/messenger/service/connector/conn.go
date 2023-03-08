@@ -45,6 +45,9 @@ func (cs *ConnectorService) Run() error {
 			}
 			cs.logger.Debugf("Add update user %s", body.User.Id)
 			cs.addUpdateUser(body.User)
+			for _, cc := range cs.clientConnById {
+				cc.Send(m)
+			}
 		case types.MessageTypeUserDisconnected:
 			cs.logger.Debug("connector: user disconnected")
 			body := types.UserPayload{}
@@ -55,6 +58,9 @@ func (cs *ConnectorService) Run() error {
 			}
 			cs.logger.Debugf("Remove user %s", body.User.Id)
 			cs.removeUser(body.User)
+			for _, cc := range cs.clientConnById {
+				cc.Send(m)
+			}
 		}
 	})
 	if err != nil {

@@ -127,9 +127,9 @@ func (uc *UserConnection) HandleRead() {
 			}
 			uc.logger.Debug("ConnectWithNameMessage: ", body)
 
+			uc.sendChan <- types.Message{MessageType: types.MessageTypeConnected, Data: types.EncodeMessageOrPanic(types.UserInfo{Id: uc.Id, Pub: body.Pub})}
 			err = uc.userConnector.ConnectToChat(uc, uc.Id, body.Pub)
 			uc.logger.Debug("Connected to chat: ", uc.Id)
-			uc.sendChan <- types.Message{MessageType: types.MessageTypeConnected, Data: types.EncodeMessageOrPanic(types.UserInfo{Id: uc.Id, Pub: body.Pub})}
 			if err != nil {
 				uc.logger.Warn("Error connecting to chat: ", err)
 				uc.sendChan <- types.Message{MessageType: types.MessageTypeConnectionError}

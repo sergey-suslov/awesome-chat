@@ -32,20 +32,20 @@ func NewNatsBroker(nc *nats.Conn, logger *zap.SugaredLogger) (*NatsBroker, error
 
 func (nb *NatsBroker) NotifyOnNewUser(id, pub string) error {
 	return nb.nc.Publish(
-		fmt.Sprintf("room.g.connect"),
+		fmt.Sprintf("room.g.update"),
 		types.ComposeMessage(types.MessageTypeNewUserConnected, types.EncodeMessageOrPanic(types.UserPayload{User: types.UserInfo{Id: id, Pub: pub}})),
 	)
 }
 
 func (nb *NatsBroker) NotifyOnUserDisconnect(id string) error {
 	return nb.nc.Publish(
-		fmt.Sprintf("room.g.disconnect"),
+		fmt.Sprintf("room.g.update"),
 		types.ComposeMessage(types.MessageTypeUserDisconnected, types.EncodeMessageOrPanic(types.UserPayload{User: types.UserInfo{Id: id}})),
 	)
 }
 
 func (nb *NatsBroker) SubscribeToRoomUpdate(cb func(m types.Message)) (common.TermChan, error) {
-	return nb.subscribe("room.g.connect", cb)
+	return nb.subscribe("room.g.update", cb)
 }
 
 func (nb *NatsBroker) SubscribeToUserMessages(id string, cb func(m types.Message)) (common.TermChan, error) {
