@@ -73,7 +73,7 @@ func (uc *UserConnection) Run() error {
 		termUserToMessages <- struct{}{}
 	}()
 	go uc.HandleRead()
-	go uc.HandleWrite()
+	uc.HandleWrite()
 	return nil
 }
 
@@ -84,13 +84,18 @@ func (uc *UserConnection) Send(message types.Message) error {
 
 func (uc *UserConnection) HandleRead() {
 	defer func() {
+		uc.logger.Debug("Close")
 		uc.conn.Close()
 	}()
-	uc.conn.SetReadLimit(maxMessageSize)
-	uc.conn.SetReadDeadline(time.Now().Add(pongWait))
-	uc.conn.SetPongHandler(func(string) error { uc.conn.SetReadDeadline(time.Now().Add(pongWait)); return nil })
+	uc.conn.SetPongHandler(func(string) error {
+		uc.logger.Debug("Pong")
+		return nil
+	})
+	uc.logger.Debug("Starting Loop")
 	for {
+		uc.logger.Debug("Reading message")
 		mt, message, err := uc.conn.ReadMessage()
+		uc.logger.Debug("Got message: ", err)
 		if err != nil {
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
 				uc.logger.Warn("error: %v", err)
@@ -111,6 +116,7 @@ func (uc *UserConnection) HandleRead() {
 		messageType := msg.MessageType
 		rawMessage := msg.Data
 
+		uc.logger.Debug("Got message: ", messageType)
 		switch messageType {
 		case types.MessageTypeConnect:
 			body := types.ConnectWithNameMessage{}
@@ -122,8 +128,10 @@ func (uc *UserConnection) HandleRead() {
 			uc.logger.Debug("ConnectWithNameMessage: ", body)
 
 			err = uc.userConnector.ConnectToChat(uc, uc.Id, body.Pub)
+			uc.logger.Debug("Connected to chat: ", uc.Id)
 			uc.sendChan <- types.Message{MessageType: types.MessageTypeConnected, Data: types.EncodeMessageOrPanic(types.UserInfo{Id: uc.Id, Pub: body.Pub})}
 			if err != nil {
+				uc.logger.Warn("Error connecting to chat: ", err)
 				uc.sendChan <- types.Message{MessageType: types.MessageTypeConnectionError}
 				break
 			}
@@ -136,13 +144,14 @@ func (uc *UserConnection) HandleRead() {
 			}
 			uc.logger.Debug("MessageToUser: ", body)
 
-			err = uc.messenger.SendMessage(body.UserId, body.Data)
+			err = uc.messenger.SendMessage(body.UserId, message)
 			if err != nil {
-				uc.sendChan <- types.Message{MessageType: types.MessageTypeConnectionError}
+				uc.sendChan <- types.Message{MessageType: types.MessageTypeError}
 				break
 			}
 		}
 	}
+	uc.logger.Debug("Ending Loop")
 }
 
 func (uc *UserConnection) HandleWrite() {
@@ -177,7 +186,7 @@ func (uc *UserConnection) HandleWrite() {
 			}
 		case <-ticker.C:
 			uc.conn.SetWriteDeadline(time.Now().Add(writeWait))
-			uc.logger.Debug("ping ", uc.Id)
+			uc.logger.Debug("Ping:", uc.Id)
 			if err := uc.conn.WriteMessage(websocket.PingMessage, nil); err != nil {
 				uc.logger.Debug("pong err ", uc.Id)
 				return

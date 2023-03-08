@@ -70,7 +70,13 @@ func (cs *ConnectorService) Stop(cc shared.ClientConnection, id, pub string) err
 }
 
 func (cs *ConnectorService) addUpdateUser(user types.UserInfo) {
+	cs.logger.Debug("Locked uLock")
 	cs.uLock.Lock()
+	// defer cs.uLock.Unlock()
+	defer func() {
+		cs.uLock.Unlock()
+		cs.logger.Debug("Unlocked uLock")
+	}()
 	for i, ui := range cs.users {
 		if user.Id == ui.Id {
 			cs.users[i] = user
@@ -78,7 +84,6 @@ func (cs *ConnectorService) addUpdateUser(user types.UserInfo) {
 		}
 	}
 	cs.users = append(cs.users, user)
-	cs.uLock.Unlock()
 }
 
 func (cs *ConnectorService) removeUser(user types.UserInfo) {
@@ -106,9 +111,11 @@ func (cs *ConnectorService) ConnectToChat(cc shared.ClientConnection, id, pub st
 	if err != nil {
 		return err
 	}
+	cs.logger.Debug("Before addUpdateUser")
 	cs.addUpdateUser(types.UserInfo{Id: id, Pub: pub})
 	cs.clientConnById[id] = cc
 
+	cs.logger.Debug("User added: ", id)
 	return nil
 }
 

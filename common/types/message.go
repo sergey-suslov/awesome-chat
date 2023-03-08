@@ -14,6 +14,7 @@ const (
 	MessageTypeNewUserConnected
 	MessageTypeUserDisconnected
 	MessageTypeMessageToUser
+	MessageTypeError
 )
 
 type Message struct {

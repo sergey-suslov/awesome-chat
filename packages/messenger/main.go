@@ -12,7 +12,7 @@ import (
 )
 
 func main() {
-	fs := flag.NewFlagSet("bookingcli", flag.ExitOnError)
+	fs := flag.NewFlagSet("chat-server", flag.ExitOnError)
 	var (
 		port = fs.Int("port", 50050, "Port")
 		env  = fs.String("env", "local", "Environment (local, development, test, production)")
