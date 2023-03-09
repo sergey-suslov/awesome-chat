@@ -11,7 +11,7 @@ import (
 )
 
 type MessageBroker interface {
-	NotifyOnNewUser(id, pub string) error
+	NotifyOnNewUser(id string, pub []byte) error
 	NotifyOnUserDisconnect(id string) error
 	SubscribeToRoomUpdate(cb func(m types.Message)) (common.TermChan, error)
 	SubscribeToUserMessages(id string, cb func(m types.Message)) (common.TermChan, error)
@@ -70,7 +70,7 @@ func (cs *ConnectorService) Run() error {
 	return nil
 }
 
-func (cs *ConnectorService) Stop(cc shared.ClientConnection, id, pub string) error {
+func (cs *ConnectorService) Stop(cc shared.ClientConnection, id string, pub []byte) error {
 	cs.termRoomUpdate <- struct{}{}
 	return nil
 }
@@ -100,7 +100,7 @@ func (cs *ConnectorService) removeUser(user types.UserInfo) {
 	cs.uLock.Unlock()
 }
 
-func (cs *ConnectorService) ConnectToChat(cc shared.ClientConnection, id, pub string) error {
+func (cs *ConnectorService) ConnectToChat(cc shared.ClientConnection, id string, pub []byte) error {
 	_, exists := cs.clientConnById[id]
 	if exists {
 		delete(cs.clientConnById, id)

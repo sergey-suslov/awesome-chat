@@ -24,7 +24,7 @@ type Message struct {
 
 type ConnectWithNameMessage struct {
 	Name string
-	Pub  string
+	Pub  []byte
 }
 
 type UserInfosMessage struct {

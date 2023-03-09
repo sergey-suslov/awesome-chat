@@ -13,7 +13,7 @@ import (
 )
 
 type UserConnector interface {
-	ConnectToChat(cc shared.ClientConnection, id, pub string) error
+	ConnectToChat(cc shared.ClientConnection, id string, pub []byte) error
 	Disconnect(cc shared.ClientConnection, id string) error
 	SubscribeUserToMessages(cc shared.ClientConnection, id string) (common.TermChan, error)
 	SubscribeUserToChatMessages(cc shared.ClientConnection, id string) (common.TermChan, error)

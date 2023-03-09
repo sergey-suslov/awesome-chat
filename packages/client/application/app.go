@@ -26,18 +26,20 @@ const (
 
 	// Maximum message size allowed from peer.
 	maxMessageSize = 100000000
+
+	messageEcriptionLabel = "message"
 )
 
 type Application struct {
-	logger     *zap.SugaredLogger
-	conn       *websocket.Conn
-	userInfos  []types.UserInfo
-	id         string
-	privateKey string
+	logger    *zap.SugaredLogger
+	conn      *websocket.Conn
+	userInfos []*UserInfoLocal
+	id        string
+	keyPair   *KeyPair
 }
 
-func NewApplication(logger *zap.SugaredLogger) *Application {
-	return &Application{logger: logger}
+func NewApplication(logger *zap.SugaredLogger, keyPair *KeyPair) *Application {
+	return &Application{logger: logger, keyPair: keyPair}
 }
 
 func (app *Application) handleRead() {
@@ -60,8 +62,11 @@ func (app *Application) handleRead() {
 			err = types.DecodeMessage(&body, m.Data)
 			app.logger.Debug("user id: ", app.id)
 			app.logger.Debug("received infos: ", body)
-			app.userInfos = util.Filter(body.Users, func(u types.UserInfo) bool {
+			userInfos := util.Filter(body.Users, func(u types.UserInfo) bool {
 				return u.Id != app.id
+			})
+			app.userInfos = util.Map(userInfos, func(ui types.UserInfo) *UserInfoLocal {
+				return NewUserInfoLocal(ui)
 			})
 			app.logger.Debug("user infos applied: ", app.userInfos)
 		case types.MessageTypeConnected:
@@ -83,7 +88,7 @@ func (app *Application) handleRead() {
 				break
 			}
 			app.logger.Debugf("Add update user %s", body.User.Id)
-			app.userInfos = append(app.userInfos, body.User)
+			app.userInfos = append(app.userInfos, NewUserInfoLocal(body.User))
 		case types.MessageTypeUserDisconnected:
 			app.logger.Debug("connector: user disconnected")
 			body := types.UserPayload{}
@@ -96,13 +101,15 @@ func (app *Application) handleRead() {
 				break
 			}
 			app.logger.Debugf("Add update user %s", body.User.Id)
-			app.userInfos = util.Filter(app.userInfos, func(u types.UserInfo) bool {
-				return u.Id != body.User.Id
+			app.userInfos = util.Filter(app.userInfos, func(u *UserInfoLocal) bool {
+				return u.ui.Id != body.User.Id
 			})
 		case types.MessageTypeMessageToUser:
 			body := types.MessageToUser{}
 			err = types.DecodeMessage(&body, m.Data)
 			app.logger.Debugf("Message got [%s]: %s", body.UserId, string(body.Data))
+			plaintext, _ := app.keyPair.DecryptWithPriv(body.Data, []byte(messageEcriptionLabel))
+			app.logger.Debugf("Message got decripted [%s]: %s", body.UserId, string(plaintext))
 		}
 	}
 }
@@ -128,8 +135,12 @@ func (app *Application) Run(url string) error {
 
 func (app *Application) ConnectWitPub() error {
 	app.conn.SetWriteDeadline(time.Now().Add(writeWait))
-	message, _ := types.EncodeMessage(types.ConnectWithNameMessage{Name: uuid.NewString(), Pub: "pub-key"})
-	err := app.conn.WriteMessage(websocket.BinaryMessage, types.ComposeMessage(types.MessageTypeConnect, message))
+	pub, err := app.keyPair.PublicKeyToX509()
+	if err != nil {
+		return err
+	}
+	message, _ := types.EncodeMessage(types.ConnectWithNameMessage{Name: uuid.NewString(), Pub: pub})
+	err = app.conn.WriteMessage(websocket.BinaryMessage, types.ComposeMessage(types.MessageTypeConnect, message))
 	if err != nil {
 		app.logger.Warn("Error during writing to websocket:", err)
 		return err
@@ -140,7 +151,11 @@ func (app *Application) ConnectWitPub() error {
 func (app *Application) ConstructMessages(content string) []types.MessageToUser {
 	messages := make([]types.MessageToUser, len(app.userInfos))
 	for i, ui := range app.userInfos {
-		messages[i] = types.MessageToUser{UserId: ui.Id, Data: []byte(content)}
+		encripted, err := app.keyPair.EncryptWithPub([]byte(content), []byte(messageEcriptionLabel), ui.pub)
+		if err != nil {
+			continue
+		}
+		messages[i] = types.MessageToUser{UserId: ui.ui.Id, Data: encripted}
 	}
 	return messages
 }

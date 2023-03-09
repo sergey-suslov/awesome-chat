@@ -62,8 +62,12 @@ func main() {
 	}
 	logger := zapLogger.Sugar()
 	common.SetLogger(logger)
-	app := application.NewApplication(logger)
-	err := app.Run(socketUrl)
+	keyPair, err := application.GenerateKeyPair()
+	if err != nil {
+		logger.Panic(err)
+	}
+	app := application.NewApplication(logger, keyPair)
+	err = app.Run(socketUrl)
 	if err != nil {
 		logger.Panic(err)
 	}

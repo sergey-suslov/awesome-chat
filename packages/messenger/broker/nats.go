@@ -30,7 +30,7 @@ func NewNatsBroker(nc *nats.Conn, logger *zap.SugaredLogger) (*NatsBroker, error
 	return &NatsBroker{nc: nc, js: js, logger: logger}, nil
 }
 
-func (nb *NatsBroker) NotifyOnNewUser(id, pub string) error {
+func (nb *NatsBroker) NotifyOnNewUser(id string, pub []byte) error {
 	return nb.nc.Publish(
 		fmt.Sprintf("room.g.update"),
 		types.ComposeMessage(types.MessageTypeNewUserConnected, types.EncodeMessageOrPanic(types.UserPayload{User: types.UserInfo{Id: id, Pub: pub}})),
