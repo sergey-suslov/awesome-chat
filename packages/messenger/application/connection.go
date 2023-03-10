@@ -1,27 +1,36 @@
 package application
 
 import (
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
+	"github.com/sergey-suslov/awesome-chat/common"
 	"github.com/sergey-suslov/awesome-chat/common/types"
+	"github.com/sergey-suslov/awesome-chat/packages/messenger/shared"
 	"go.uber.org/zap"
 )
 
 type UserConnector interface {
-	AddConnection(nickname string, pub string, uc *UserConnection) error
-	Disconnect(uc *UserConnection)
-	CreateRoomWithUserByTag(userTag string, uc *UserConnection) error
-	SendRoomInvitationAccept(roomId, pub string) error
+	ConnectToChat(cc shared.ClientConnection, id string, pub []byte) error
+	Disconnect(cc shared.ClientConnection, id string) error
+	SubscribeUserToMessages(cc shared.ClientConnection, id string) (common.TermChan, error)
+	SubscribeUserToChatMessages(cc shared.ClientConnection, id string) (common.TermChan, error)
+}
+
+type Messenger interface {
+	SendMessage(userId string, data []byte) error
 }
 
 type UserConnection struct {
 	conn          *websocket.Conn
 	logger        *zap.SugaredLogger
-	Send          chan types.Message
+	sendChan      chan types.Message
 	userConnector UserConnector
+	messenger     Messenger
 	Id            string
+	term          sync.WaitGroup
 }
 
 var upgrader = websocket.Upgrader{
@@ -34,7 +43,7 @@ const (
 	writeWait = 10 * time.Second
 
 	// Time allowed to read the next pong message from the peer.
-	pongWait = 60 * time.Second
+	pongWait = 5 * time.Second
 
 	// Send pings to peer with this period. Must be less than pongWait.
 	pingPeriod = (pongWait * 9) / 10
@@ -43,24 +52,50 @@ const (
 	maxMessageSize = 512
 )
 
-func NewUserConnection(userConnection *websocket.Conn, logger *zap.SugaredLogger, send chan types.Message, userConnector UserConnector) *UserConnection {
-	return &UserConnection{Id: string(uuid.New().String()), conn: userConnection, logger: logger, Send: send, userConnector: userConnector}
+func NewUserConnection(userConnection *websocket.Conn, logger *zap.SugaredLogger, send chan types.Message, userConnector UserConnector, messenger Messenger) *UserConnection {
+	return &UserConnection{Id: string(uuid.New().String()), conn: userConnection, logger: logger, sendChan: send, userConnector: userConnector, messenger: messenger}
 }
 
-func (uc *UserConnection) Run() {
+func (uc *UserConnection) Run() error {
+	termUserToMessages, err := uc.userConnector.SubscribeUserToMessages(uc, uc.Id)
+	if err != nil {
+		return err
+	}
+	termUserToChatMessages, err := uc.userConnector.SubscribeUserToChatMessages(uc, uc.Id)
+	if err != nil {
+		return err
+	}
+	uc.term.Add(1)
+	go func() {
+		uc.term.Wait()
+		uc.logger.Debug("connection terminated wait group", uc.Id)
+		termUserToChatMessages <- struct{}{}
+		termUserToMessages <- struct{}{}
+	}()
 	go uc.HandleRead()
-	go uc.HandleWrite()
+	uc.HandleWrite()
+	return nil
+}
+
+func (uc *UserConnection) Send(message types.Message) error {
+	uc.sendChan <- message
+	return nil
 }
 
 func (uc *UserConnection) HandleRead() {
 	defer func() {
+		uc.logger.Debug("Close")
 		uc.conn.Close()
 	}()
-	uc.conn.SetReadLimit(maxMessageSize)
-	uc.conn.SetReadDeadline(time.Now().Add(pongWait))
-	uc.conn.SetPongHandler(func(string) error { uc.conn.SetReadDeadline(time.Now().Add(pongWait)); return nil })
+	uc.conn.SetPongHandler(func(string) error {
+		uc.logger.Debug("Pong")
+		return nil
+	})
+	uc.logger.Debug("Starting Loop")
 	for {
+		uc.logger.Debug("Reading message")
 		mt, message, err := uc.conn.ReadMessage()
+		uc.logger.Debug("Got message: ", err)
 		if err != nil {
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
 				uc.logger.Warn("error: %v", err)
@@ -72,15 +107,16 @@ func (uc *UserConnection) HandleRead() {
 			uc.logger.Debug("Message is not binary:", mt)
 			continue
 		}
-		if len(message) < 2 {
-			uc.logger.Debug("Message is too short:", len(message))
-			continue
-		}
 
 		// Handle message
-		messageType := message[0]
-		rawMessage := message[1:]
+		msg, err := types.DecomposeMessage(message)
+		if err != nil {
+			continue
+		}
+		messageType := msg.MessageType
+		rawMessage := msg.Data
 
+		uc.logger.Debug("Got message: ", messageType)
 		switch messageType {
 		case types.MessageTypeConnect:
 			body := types.ConnectWithNameMessage{}
@@ -91,54 +127,47 @@ func (uc *UserConnection) HandleRead() {
 			}
 			uc.logger.Debug("ConnectWithNameMessage: ", body)
 
-			err = uc.userConnector.AddConnection(body.Name, body.Pub, uc)
+			uc.sendChan <- types.Message{MessageType: types.MessageTypeConnected, Data: types.EncodeMessageOrPanic(types.UserInfo{Id: uc.Id, Pub: body.Pub})}
+			err = uc.userConnector.ConnectToChat(uc, uc.Id, body.Pub)
+			uc.logger.Debug("Connected to chat: ", uc.Id)
 			if err != nil {
-				uc.Send <- types.Message{MessageType: types.MessageTypeConnectionError}
+				uc.logger.Warn("Error connecting to chat: ", err)
+				uc.sendChan <- types.Message{MessageType: types.MessageTypeConnectionError}
 				break
 			}
-			uc.Send <- types.Message{MessageType: types.MessageTypeConnectionError}
-
-		case types.MessageTypeNewRoom:
-			body := types.NewRoomByUserTagMessage{}
+		case types.MessageTypeMessageToUser:
+			body := types.MessageToUser{}
 			err = types.DecodeMessage(&body, rawMessage)
 			if err != nil {
 				uc.logger.Debug("Error decoding body: ", err)
 				break
 			}
+			uc.logger.Debug("MessageToUser: ", body)
 
-			err = uc.userConnector.CreateRoomWithUserByTag(body.UserTag, uc)
+			err = uc.messenger.SendMessage(body.UserId, message)
 			if err != nil {
-				uc.Send <- types.Message{MessageType: types.MessageTypeRoomCreationError}
-				break
-			}
-		case types.MessageTypeNewRoomInviteAccepted:
-			body := types.InvitationAcceptedMessage{}
-			err = types.DecodeMessage(&body, rawMessage)
-			if err != nil {
-				uc.logger.Debug("Error decoding body: ", err)
-				break
-			}
-			err = uc.userConnector.SendRoomInvitationAccept(body.RoomId, body.Pub)
-			if err != nil {
-				uc.logger.Debug("Error sending room invitation accept ")
+				uc.sendChan <- types.Message{MessageType: types.MessageTypeError}
 				break
 			}
 		}
 	}
+	uc.logger.Debug("Ending Loop")
 }
 
 func (uc *UserConnection) HandleWrite() {
 	ticker := time.NewTicker(pingPeriod)
 	defer func() {
+		uc.logger.Debug("closing write handler for", uc.Id)
+		uc.term.Done()
 		ticker.Stop()
-		uc.userConnector.Disconnect(uc)
-		close(uc.Send)
+		uc.userConnector.Disconnect(uc, uc.Id)
+		close(uc.sendChan)
 		uc.conn.Close()
 	}()
 
 	for {
 		select {
-		case message, ok := <-uc.Send:
+		case message, ok := <-uc.sendChan:
 			uc.conn.SetWriteDeadline(time.Now().Add(writeWait))
 			if !ok {
 				// The hub closed the channel.
@@ -146,7 +175,6 @@ func (uc *UserConnection) HandleWrite() {
 				return
 			}
 
-			// TODO: pass message type too
 			w, err := uc.conn.NextWriter(websocket.BinaryMessage)
 			if err != nil {
 				return
@@ -158,7 +186,9 @@ func (uc *UserConnection) HandleWrite() {
 			}
 		case <-ticker.C:
 			uc.conn.SetWriteDeadline(time.Now().Add(writeWait))
+			uc.logger.Debug("Ping:", uc.Id)
 			if err := uc.conn.WriteMessage(websocket.PingMessage, nil); err != nil {
+				uc.logger.Debug("pong err ", uc.Id)
 				return
 			}
 		}

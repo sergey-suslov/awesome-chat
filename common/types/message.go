@@ -3,17 +3,18 @@ package types
 import (
 	"bytes"
 	"encoding/gob"
+	"errors"
 )
 
 const (
 	MessageTypeConnect uint8 = 1 + iota
-	MessageTypeNewRoom
-	MessageTypeNewRoomInvite
-	MessageTypeNewRoomInviteAccepted
-	MessageTypeNewRoomReady
 	MessageTypeConnected
 	MessageTypeConnectionError
-	MessageTypeRoomCreationError
+	MessageTypeUserInfos
+	MessageTypeNewUserConnected
+	MessageTypeUserDisconnected
+	MessageTypeMessageToUser
+	MessageTypeError
 )
 
 type Message struct {
@@ -23,21 +24,20 @@ type Message struct {
 
 type ConnectWithNameMessage struct {
 	Name string
-	Pub  string
+	Pub  []byte
 }
 
-type NewRoomByUserTagMessage struct {
-	UserTag string
+type UserInfosMessage struct {
+	Users []UserInfo
 }
 
-type InviteToRoomMessage struct {
-	RoomId string
-	Pub    string
+type UserPayload struct {
+	User UserInfo
 }
 
-type InvitationAcceptedMessage struct {
-	RoomId string
-	Pub    string
+type MessageToUser struct {
+	UserId string
+	Data   []byte
 }
 
 func EncodeMessage[T any](t T) ([]byte, error) {
@@ -61,13 +61,19 @@ func EncodeMessageOrPanic[T any](t T) []byte {
 func DecodeMessage[T any](t *T, data []byte) error {
 	buf := bytes.NewBuffer(data)
 	dec := gob.NewDecoder(buf)
-	err := dec.Decode(&t)
+	err := dec.Decode(t)
 	if err != nil {
 		return err
 	}
 	return nil
 }
 
+func DecomposeMessage(data []byte) (Message, error) {
+	if len(data) < 2 {
+		return Message{}, errors.New("Message is too short")
+	}
+	return Message{MessageType: data[0], Data: data[1:]}, nil
+}
 func ComposeMessage(messageType uint8, encoded []byte) []byte {
 	msg := []byte{messageType}
 	return append(msg, encoded...)
