@@ -2,6 +2,7 @@ package broker
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/nats-io/nats.go"
@@ -28,6 +29,7 @@ func NewNatsBroker(nc *nats.Conn, logger *zap.SugaredLogger) (*NatsBroker, error
 	objStore, err := js.CreateObjectStore(&nats.ObjectStoreConfig{
 		Bucket:  "users",
 		Storage: nats.FileStorage,
+		TTL:     time.Duration(time.Hour * 24),
 	})
 	if err != nil {
 		return nil, err
