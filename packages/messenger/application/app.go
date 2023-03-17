@@ -26,10 +26,19 @@ func (app *Application) Start() {
 	if err != nil {
 		app.logger.Fatal("Error connecting to NATS: ", err)
 	}
+
 	natsBroker, err := broker.NewNatsBroker(nc, app.logger)
 	if err != nil {
 		app.logger.Fatal("Error creating NatsBroker: ", err)
 	}
+	natsTerm, err := natsBroker.Run()
+	if err != nil {
+		app.logger.Fatal("Error running NatsBroker: ", err)
+	}
+	defer func() {
+		natsTerm <- struct{}{}
+	}()
+
 	connector := connector.NewConnectorService(natsBroker, app.logger)
 	err = connector.Run()
 	if err != nil {

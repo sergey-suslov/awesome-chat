@@ -2,6 +2,7 @@ package application
 
 import (
 	"bufio"
+	"errors"
 	"os"
 	"os/signal"
 	"strings"
@@ -28,18 +29,23 @@ const (
 	maxMessageSize = 100000000
 
 	messageEcriptionLabel = "message"
+
+	connTermintedNormaly uint8 = 1
+	connTermintedWithErr uint8 = 2
 )
 
 type Application struct {
 	logger    *zap.SugaredLogger
 	conn      *websocket.Conn
+	connTerm  chan uint8
 	userInfos []*UserInfoLocal
 	id        string
 	keyPair   *KeyPair
+	connected bool
 }
 
 func NewApplication(logger *zap.SugaredLogger, keyPair *KeyPair) *Application {
-	return &Application{logger: logger, keyPair: keyPair}
+	return &Application{logger: logger, keyPair: keyPair, connected: false, connTerm: make(chan uint8, 2)}
 }
 
 func (app *Application) handleRead() {
@@ -48,9 +54,10 @@ func (app *Application) handleRead() {
 		_, msg, err := app.conn.ReadMessage()
 		app.logger.Debug("Got message")
 		if err != nil {
-			app.logger.Warn("error: %v", err)
+			app.connTerm <- connTermintedWithErr
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
 				app.logger.Warn("error: %v", err)
+				return
 			}
 			return
 		}
@@ -114,23 +121,44 @@ func (app *Application) handleRead() {
 	}
 }
 
-func (app *Application) Run(url string) error {
+func (app *Application) setupConnection(url string) (*websocket.Conn, error) {
 	conn, _, err := websocket.DefaultDialer.Dial(url, nil)
 	if err != nil {
-		app.logger.Fatal("Error connecting to Websocket Server:", err)
+		return nil, err
 	}
-	app.conn = conn
 	conn.SetPingHandler(func(appData string) error {
-		app.logger.Debug("Ping")
+		// app.logger.Debug("Ping")
 		return nil
 	})
-	defer conn.Close()
-	go app.handleRead()
-	err = app.ConnectWitPub()
-	if err != nil {
-		app.logger.Fatal("Error registering user:", err)
+	return conn, nil
+}
+
+func (app *Application) Run(url string) error {
+	tries := 2
+	for {
+		app.logger.Debug("Trying to connect...")
+		conn, err := app.setupConnection(url)
+		if err != nil {
+			app.logger.Fatal("Error connecting to Websocket Server:", err)
+		}
+		app.conn = conn
+		app.connTerm = make(chan uint8, 2)
+		go app.handleRead()
+		err = app.ConnectWitPub()
+		if err != nil {
+			app.logger.Fatal("Error registering user:", err)
+		}
+		err = app.StartLoop()
+		app.conn.Close()
+		if err == nil {
+			return nil
+		}
+		if err != nil && tries < 0 {
+			return err
+		}
+		app.logger.Debug("Trying to reconnect in 3 seconds...")
+		time.Sleep(time.Second * 3)
 	}
-	return app.StartLoop()
 }
 
 func (app *Application) ConnectWitPub() error {
@@ -208,6 +236,13 @@ func (app *Application) StartLoop() error {
 				// }
 			}
 
+		case termCode := <-app.connTerm:
+			if termCode == connTermintedWithErr {
+				app.logger.Debug("Terminated with error")
+				return errors.New("Terminated with error")
+			}
+			app.logger.Debug("Terminated normaly")
+			return nil
 		case <-interrupt:
 			// We received a SIGINT (Ctrl + C). Terminate gracefully...
 			app.logger.Debug("Received SIGINT interrupt signal. Closing all pending connections")
