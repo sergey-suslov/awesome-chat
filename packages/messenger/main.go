@@ -33,7 +33,8 @@ func main() {
 	common.SetLogger(logger)
 
 	// Init dependencies
-	logger.Info("Running on env: %s", *env)
+	logger.Info("Running on env: ", *env)
+	logger.Info("Running on port: ", *port)
 	application := application.NewApplication(application.Config{Port: *port}, logger)
 	application.Start()
 }

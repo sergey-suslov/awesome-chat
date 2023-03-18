@@ -26,13 +26,17 @@ func NewNatsBroker(nc *nats.Conn, logger *zap.SugaredLogger) (*NatsBroker, error
 	if err != nil {
 		return nil, err
 	}
-	objStore, err := js.CreateObjectStore(&nats.ObjectStoreConfig{
-		Bucket:  "users",
-		Storage: nats.FileStorage,
-		TTL:     time.Duration(time.Hour * 24),
-	})
-	if err != nil {
-		return nil, err
+	objStore, err := js.ObjectStore("users")
+	if err == nats.ErrStreamNotFound {
+		err = nil
+		objStore, err = js.CreateObjectStore(&nats.ObjectStoreConfig{
+			Bucket:  "users",
+			Storage: nats.FileStorage,
+			TTL:     time.Duration(time.Hour * 24),
+		})
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	userPubs, err := fetchUserPubsFromNats(objStore)
@@ -44,7 +48,7 @@ func NewNatsBroker(nc *nats.Conn, logger *zap.SugaredLogger) (*NatsBroker, error
 		Name:     "messages",
 		Subjects: []string{"messages.>"},
 	})
-	if err != nil {
+	if err != nats.ErrStreamNameAlreadyInUse && err != nil {
 		return nil, err
 	}
 	return &NatsBroker{nc: nc, js: js, logger: logger, usersObjStore: objStore, usersPubs: userPubs, roomUpdateSubs: make(map[string]func(m types.Message))}, nil
