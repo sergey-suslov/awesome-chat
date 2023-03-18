@@ -46,6 +46,7 @@ func main() {
 	fs := flag.NewFlagSet("chat-client", flag.ExitOnError)
 	var (
 		env  = fs.String("env", "local", "Environment (local, development, test, production)")
+		port = fs.Int("port", 50050, "Port")
 		help = fs.Bool("h", false, "Show help")
 	)
 	fs.Usage = usageFor(fs, os.Args[0]+" [flags] <a> <b>")
@@ -55,7 +56,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	socketUrl := "ws://localhost:50050" + "/ws"
+	socketUrl := fmt.Sprintf("ws://localhost:%d/ws", *port)
 	var zapLogger *zap.Logger
 	if zapLogger, _ = zap.NewDevelopment(); *env == "production" {
 		zapLogger, _ = zap.NewProduction()

@@ -161,7 +161,9 @@ func (uc *UserConnection) HandleWrite() {
 		uc.term.Done()
 		ticker.Stop()
 		uc.userConnector.Disconnect(uc, uc.Id)
-		close(uc.sendChan)
+		for len(uc.sendChan) > 0 {
+			<-uc.sendChan
+		}
 		uc.conn.Close()
 	}()
 
@@ -186,9 +188,9 @@ func (uc *UserConnection) HandleWrite() {
 			}
 		case <-ticker.C:
 			uc.conn.SetWriteDeadline(time.Now().Add(writeWait))
-			uc.logger.Debug("Ping:", uc.Id)
+			// uc.logger.Debug("Ping:", uc.Id)
 			if err := uc.conn.WriteMessage(websocket.PingMessage, nil); err != nil {
-				uc.logger.Debug("pong err ", uc.Id)
+				// uc.logger.Debug("pong err ", uc.Id)
 				return
 			}
 		}
